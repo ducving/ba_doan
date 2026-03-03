@@ -1,0 +1,26 @@
+# Storage files
+storage/
+*.log
+
+# Rate limit files
+storage/rate_limit_*.json
+
+# PHP errors
+storage/php_errors.log
+
+# Security logs
+storage/security.log
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Config (nếu có thông tin nhạy cảm)
+# config/database.php
