@@ -18,7 +18,7 @@ class User {
     }
 
     // Đăng ký user mới
-    public function register($name, $email, $password, $avatar = null) {
+    public function register($name, $email, $password, $avatar = null, $role = 'user', $status = 'active') {
         // Kiểm tra email đã tồn tại
         if ($this->emailExists($email)) {
             return [
@@ -31,10 +31,10 @@ class User {
         $hashedPassword = password_hash($password, PASSWORD_DEFAULT);
 
         // Insert user vào database
-        $sql = "INSERT INTO users (name, email, password, avatar, created_at) VALUES (?, ?, ?, ?, NOW())";
+        $sql = "INSERT INTO users (name, email, password, avatar, role, status, created_at) VALUES (?, ?, ?, ?, ?, ?, NOW())";
         try {
             $stmt = $this->db->prepare($sql);
-            $stmt->execute([$name, $email, $hashedPassword, $avatar]);
+            $stmt->execute([$name, $email, $hashedPassword, $avatar, $role, $status]);
             
             $userId = $this->db->lastInsertId();
             
@@ -143,6 +143,36 @@ class User {
                 'success' => false,
                 'message' => 'Lỗi cập nhật: ' . $e->getMessage()
             ];
+        }
+    }
+    // Lấy danh sách tất cả user
+    public function getAllUsers($limit = 10, $offset = 0) {
+        $sql = "SELECT id, name, email, phone, address, avatar, role, status, created_at 
+                FROM users 
+                ORDER BY created_at DESC 
+                LIMIT ? OFFSET ?";
+        
+        try {
+            $stmt = $this->db->prepare($sql);
+            $stmt->bindValue(1, (int)$limit, PDO::PARAM_INT);
+            $stmt->bindValue(2, (int)$offset, PDO::PARAM_INT);
+            $stmt->execute();
+            
+            return $stmt->fetchAll();
+        } catch (PDOException $e) {
+            return [];
+        }
+    }
+
+    // Đếm tổng số user
+    public function getTotalUsers() {
+        $sql = "SELECT COUNT(*) as total FROM users";
+        try {
+            $stmt = $this->db->query($sql);
+            $result = $stmt->fetch();
+            return (int)$result['total'];
+        } catch (PDOException $e) {
+            return 0;
         }
     }
 }

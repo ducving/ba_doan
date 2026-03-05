@@ -24,7 +24,9 @@ switch ($path) {
                 'GET/POST/PUT/DELETE /api/products' => 'Quản lý sản phẩm',
                 'GET/POST/PUT/DELETE /api/orders' => 'Quản lý đơn hàng',
                 'GET/POST/PUT/DELETE /api/banners' => 'Quản lý banner',
-                'GET/PUT /api/users' => 'Xem và cập nhật thông tin cá nhân'
+                'GET/PUT /api/users' => 'Xem và cập nhật thông tin cá nhân',
+                'GET/POST/PUT/DELETE /api/employees' => 'Quản lý nhân viên',
+                'GET /api/get_users' => 'Lấy danh sách tất cả user (Admin)'
             ]
         ]);
         break;
@@ -63,6 +65,21 @@ switch ($path) {
     case 'api/users.php':
     case 'api/profile_update.php':
         require_once __DIR__ . '/api/users.php';
+        break;
+
+    case 'api/employees':
+    case 'api/employees.php':
+        require_once __DIR__ . '/api/employees.php';
+        break;
+
+    case 'api/get_users':
+    case 'api/get_users.php':
+        require_once __DIR__ . '/api/get_users.php';
+        break;
+
+    case 'api/attendance':
+    case 'api/attendance.php':
+        require_once __DIR__ . '/api/attendance.php';
         break;
     
     default:

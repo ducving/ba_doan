@@ -98,11 +98,17 @@ class Order {
             $itemStmt->execute([$id]);
             $order['items'] = $itemStmt->fetchAll();
 
-            // Lấy lịch sử trạng thái đơn hàng
+            // Lấy lịch sử trạng thái đơn hàng (Timeline)
             $historySql = "SELECT * FROM order_status_history WHERE order_id = ? ORDER BY created_at DESC";
             $historyStmt = $this->db->prepare($historySql);
             $historyStmt->execute([$id]);
             $order['status_history'] = $historyStmt->fetchAll();
+
+            // Lấy lịch sử các lần thanh toán (Payment Logs)
+            $paymentSql = "SELECT * FROM order_payments WHERE order_id = ? ORDER BY created_at DESC";
+            $paymentStmt = $this->db->prepare($paymentSql);
+            $paymentStmt->execute([$id]);
+            $order['payment_logs'] = $paymentStmt->fetchAll();
 
             return $order;
         } catch (PDOException $e) {
@@ -196,6 +202,9 @@ class Order {
             // 4. Ghi lại lịch sử trạng thái đầu tiên
             $this->addStatusHistory($orderId, 'pending', 'Đơn hàng được tạo thành công');
 
+            // 5. Ghi log khởi tạo giao dịch thanh toán
+            $this->addPaymentLog($orderId, $userId, $paymentMethod, $totalAmount, null, 'pending', 'Khởi tạo thông tin thanh toán cho đơn hàng');
+
             $this->db->commit();
 
             return [
@@ -263,9 +272,19 @@ class Order {
                 $updateStmt = $this->db->prepare($updateSql);
                 $updateStmt->execute([$status, $paymentStatus, $fullName, $phone, $address, $id]);
                 
-                // Ghi lịch sử nếu status thay đổi
+                // Ghi lịch sử trạng thái
                 if ($status !== $order['status']) {
                     $this->addStatusHistory($id, $status, "Trạng thái đơn hàng được cập nhật bởi Admin");
+                }
+                
+                // Ghi lịch sử thanh toán nếu payment_status thay đổi sang 'paid'
+                if ($paymentStatus !== $order['payment_status']) {
+                    $this->addStatusHistory($id, $status, "Trạng thái thanh toán: " . $paymentStatus);
+                    if ($paymentStatus === 'paid') {
+                        // Lấy user_id từ đơn hàng hiện tại
+                        $userId = $order['user_id'] ?? null;
+                        $this->addPaymentLog($id, $userId, $order['payment_method'], $order['total_amount'], null, 'paid', 'Thanh toán thành công qua Admin');
+                    }
                 }
             }
 
@@ -325,12 +344,24 @@ class Order {
         }
     }
 
-    // Thêm lịch sử trạng thái đơn hàng
+    // Thêm lịch sử trạng thái đơn hàng (vào bảng status_history)
     private function addStatusHistory($orderId, $status, $note = '') {
         try {
             $sql = "INSERT INTO order_status_history (order_id, status, note) VALUES (?, ?, ?)";
             $stmt = $this->db->prepare($sql);
             return $stmt->execute([$orderId, $status, $note]);
+        } catch (PDOException $e) {
+            return false;
+        }
+    }
+
+    // Ghi log giao dịch thanh toán (vào bảng order_payments)
+    public function addPaymentLog($orderId, $userId, $method, $amount, $transId = null, $status = 'paid', $note = '') {
+        try {
+            $sql = "INSERT INTO order_payments (order_id, user_id, payment_method, amount, transaction_id, status, note) 
+                    VALUES (?, ?, ?, ?, ?, ?, ?)";
+            $stmt = $this->db->prepare($sql);
+            return $stmt->execute([$orderId, $userId, $method, $amount, $transId, $status, $note]);
         } catch (PDOException $e) {
             return false;
         }

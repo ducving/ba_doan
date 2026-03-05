@@ -140,7 +140,9 @@ if (!$rateLimitCheck['allowed']) {
 
 // Đăng ký user
 $user = new User();
-$result = $user->register($name, $email, $password, $avatarPath);
+$role = $data['role'] ?? 'user';
+$status = $data['status'] ?? 'active';
+$result = $user->register($name, $email, $password, $avatarPath, $role, $status);
 
 if ($result['success']) {
     // Reset rate limit khi đăng ký thành công
