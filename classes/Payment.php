@@ -14,20 +14,20 @@ class Payment {
         $where = [];
         $params = [];
 
-        if (isset($filters['user_id'])) {
-            $where[] = "user_id = ?";
-            $params[] = $filters['user_id'];
-        }
+    if (isset($filters['user_id'])) {
+    $where[] = "p.user_id = ?";
+    $params[] = $filters['user_id'];
+}
 
-        if (isset($filters['order_id'])) {
-            $where[] = "order_id = ?";
-            $params[] = $filters['order_id'];
-        }
+if (isset($filters['order_id'])) {
+    $where[] = "p.order_id = ?";
+    $params[] = $filters['order_id'];
+}
 
-        if (isset($filters['status'])) {
-            $where[] = "status = ?";
-            $params[] = $filters['status'];
-        }
+if (isset($filters['status'])) {
+    $where[] = "p.status = ?";
+    $params[] = $filters['status'];
+}
 
         $whereClause = !empty($where) ? "WHERE " . implode(" AND ", $where) : "";
 
@@ -52,7 +52,7 @@ class Payment {
             $payments = $stmt->fetchAll();
 
             // Lấy tổng số
-            $countSql = "SELECT COUNT(*) as total FROM order_payments $whereClause";
+            $countSql = "SELECT COUNT(*) as total FROM order_payments p $whereClause";
             $countStmt = $this->db->prepare($countSql);
             $countStmt->execute(array_slice($params, 0, -2));
             $total = $countStmt->fetch()['total'];

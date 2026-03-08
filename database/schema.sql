@@ -13,6 +13,8 @@ CREATE TABLE IF NOT EXISTS users (
     id INT AUTO_INCREMENT PRIMARY KEY,
     name VARCHAR(100) NOT NULL,
     email VARCHAR(100) NOT NULL UNIQUE,
+    google_id VARCHAR(255) NULL COMMENT 'Google ID for social login',
+    oauth_provider VARCHAR(50) NULL COMMENT 'Social provider name',
     password VARCHAR(255) NOT NULL,
     status ENUM('active', 'inactive', 'banned') DEFAULT 'active' COMMENT 'Trạng thái tài khoản',
     role ENUM('user', 'admin') DEFAULT 'user' COMMENT 'Vai trò người dùng',
@@ -24,6 +26,7 @@ CREATE TABLE IF NOT EXISTS users (
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     INDEX idx_email (email),
+    INDEX idx_google_id (google_id),
     INDEX idx_status (status),
     INDEX idx_role (role)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

@@ -81,6 +81,11 @@ switch ($path) {
     case 'api/attendance.php':
         require_once __DIR__ . '/api/attendance.php';
         break;
+
+    case 'api/points':
+    case 'api/points.php':
+        require_once __DIR__ . '/api/points.php';
+        break;
     
     default:
         http_response_code(404);

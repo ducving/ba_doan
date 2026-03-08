@@ -116,11 +116,12 @@ switch ($method) {
         break;
 
     case 'PUT':
-        // Cập nhật đơn hàng (Chủ yếu dành cho Admin cập nhật trạng thái)
+        // User thường: cập nhật trạng thái đơn của chính mình (status giới hạn)
+        // Admin: cập nhật đầy đủ thông tin đơn hàng
         $payload = JWT::verifyToken();
-        if (!$payload || $payload['role'] !== 'admin') {
-            http_response_code(403);
-            echo json_encode(['success' => false, 'message' => 'Bạn không có quyền thực hiện thao tác này']);
+        if (!$payload) {
+            http_response_code(401);
+            echo json_encode(['success' => false, 'message' => 'Token không hợp lệ']);
             exit();
         }
 
@@ -132,9 +133,57 @@ switch ($method) {
         }
 
         $id = (int)$data['id'];
-        unset($data['id']);
 
-        $result = $order->update($id, $data);
+        if ($payload['role'] !== 'admin') {
+            // User chỉ được cập nhật đơn của chính mình
+            $orderData = $order->getById($id);
+
+            if (!$orderData) {
+                http_response_code(404);
+                echo json_encode(['success' => false, 'message' => 'Đơn hàng không tồn tại']);
+                exit();
+            }
+
+            if ($orderData['user_id'] != $payload['user_id']) {
+                http_response_code(403);
+                echo json_encode(['success' => false, 'message' => 'Bạn không có quyền thao tác đơn hàng này']);
+                exit();
+            }
+
+            // Các trạng thái user được phép tự cập nhật
+            $allowedStatuses = ['cancelled', 'completed'];
+            $newStatus = $data['status'] ?? null;
+
+            if (!$newStatus || !in_array($newStatus, $allowedStatuses)) {
+                http_response_code(403);
+                echo json_encode([
+                    'success' => false,
+                    'message' => 'Bạn chỉ được phép cập nhật trạng thái: cancelled (hủy), completed (đã nhận hàng)'
+                ]);
+                exit();
+            }
+
+            // Nếu hủy → dùng cancelByUser để hoàn kho
+            if ($newStatus === 'cancelled') {
+                $result = $order->cancelByUser($id, $payload['user_id']);
+            } else {
+                // Các trạng thái khác (completed): chỉ update status
+                unset($data['id']);
+                $data = ['status' => $newStatus]; // Giới hạn chỉ update status
+                $result = $order->update($id, $data);
+            }
+        } else {
+            // Admin: cập nhật đầy đủ
+            unset($data['id']);
+            $result = $order->update($id, $data);
+        }
+
+        if ($result['success']) {
+            http_response_code(200);
+        } else {
+            http_response_code(400);
+        }
+
         echo json_encode($result);
         break;
 
@@ -155,6 +204,42 @@ switch ($method) {
 
         $id = (int)$_GET['id'];
         $result = $order->delete($id);
+        echo json_encode($result);
+        break;
+
+    case 'PATCH':
+        // Người dùng tự hủy đơn hàng của mình
+        $payload = JWT::verifyToken();
+        if (!$payload) {
+            http_response_code(401);
+            echo json_encode(['success' => false, 'message' => 'Token không hợp lệ']);
+            exit();
+        }
+
+        $data = json_decode(file_get_contents('php://input'), true);
+        if (!$data || !isset($data['id'])) {
+            http_response_code(400);
+            echo json_encode(['success' => false, 'message' => 'Thiếu ID đơn hàng']);
+            exit();
+        }
+
+        // Chỉ cho phép action = 'cancel'
+        $action = $data['action'] ?? '';
+        if ($action !== 'cancel') {
+            http_response_code(400);
+            echo json_encode(['success' => false, 'message' => 'Action không hợp lệ. Chỉ hỗ trợ action = "cancel"']);
+            exit();
+        }
+
+        $id = (int)$data['id'];
+        $result = $order->cancelByUser($id, $payload['user_id']);
+
+        if ($result['success']) {
+            http_response_code(200);
+        } else {
+            http_response_code(400);
+        }
+
         echo json_encode($result);
         break;
 

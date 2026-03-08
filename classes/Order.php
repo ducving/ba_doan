@@ -118,14 +118,16 @@ class Order {
 
     // Tạo đơn hàng mới
     public function create($data) {
-        $userId = $data['user_id'] ?? null;
-        $fullName = $data['full_name'] ?? '';
-        $email = $data['email'] ?? '';
-        $phone = $data['phone'] ?? '';
-        $address = $data['address'] ?? '';
-        $note = $data['note'] ?? null;
-        $paymentMethod = $data['payment_method'] ?? 'cod';
-        $items = $data['items'] ?? []; // Array of ['product_id', 'quantity']
+        $userId        = $data['user_id']        ?? null;
+        $fullName      = $data['full_name']       ?? '';
+        $email         = $data['email']           ?? '';
+        $phone         = $data['phone']           ?? '';
+        $address       = $data['address']         ?? '';
+        $note          = $data['note']            ?? null;
+        $paymentMethod = $data['payment_method']  ?? 'cod';
+        $items         = $data['items']           ?? [];
+        $pointsRedeemed = (int)($data['points_redeemed']  ?? 0);
+        $discountAmount = (float)($data['discount_amount'] ?? 0);
 
         // Validate
         if (empty($fullName) || empty($phone) || empty($address) || empty($items)) {
@@ -144,9 +146,9 @@ class Order {
 
             foreach ($items as $item) {
                 $productId = $item['product_id'];
-                $quantity = max(1, (int)$item['quantity']);
+                $quantity  = max(1, (int)$item['quantity']);
 
-                $productSql = "SELECT name, price, sale_price, stock_quantity FROM products WHERE id = ? FOR UPDATE";
+                $productSql  = "SELECT name, price, sale_price, stock_quantity FROM products WHERE id = ? FOR UPDATE";
                 $productStmt = $this->db->prepare($productSql);
                 $productStmt->execute([$productId]);
                 $product = $productStmt->fetch();
@@ -161,56 +163,82 @@ class Order {
                     return ['success' => false, 'message' => "Sản phẩm '{$product['name']}' không đủ hàng"];
                 }
 
-                $price = $product['sale_price'] ?? $product['price'];
+                $price     = $product['sale_price'] ?? $product['price'];
                 $itemTotal = $price * $quantity;
                 $totalAmount += $itemTotal;
 
                 $itemsToInsert[] = [
-                    'product_id' => $productId,
-                    'quantity' => $quantity,
-                    'price' => $price,
+                    'product_id'  => $productId,
+                    'quantity'    => $quantity,
+                    'price'       => $price,
                     'total_price' => $itemTotal
                 ];
             }
 
-            // 2. Tạo đơn hàng
-            $orderSql = "INSERT INTO orders (user_id, full_name, email, phone, address, total_amount, note, payment_method) 
-                         VALUES (?, ?, ?, ?, ?, ?, ?, ?)";
+            // Xử lý điểm thưởng (nếu user đã đăng nhập và muốn dùng điểm)
+            if ($userId && $pointsRedeemed > 0) {
+                // Kiểm tra user có đủ điểm không
+                $chkStmt = $this->db->prepare("SELECT points FROM user_points WHERE user_id = ?");
+                $chkStmt->execute([$userId]);
+                $currentPts = (int)($chkStmt->fetchColumn() ?: 0);
+                $pointsRedeemed = min($pointsRedeemed, $currentPts); // Không dùng quá số có
+                $discountAmount = min($pointsRedeemed * 1000, $totalAmount); // 1 điểm = 1.000đ
+            } else {
+                $pointsRedeemed = 0;
+                $discountAmount = 0;
+            }
+
+            $finalAmount = max(0, $totalAmount - $discountAmount);
+
+            // 2. Tạo đơn hàng (lưu cả points_redeemed và discount_amount)
+            $orderSql = "INSERT INTO orders
+                            (user_id, full_name, email, phone, address, total_amount,
+                             note, payment_method, points_redeemed, discount_amount)
+                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
             $orderStmt = $this->db->prepare($orderSql);
-            $orderStmt->execute([$userId, $fullName, $email, $phone, $address, $totalAmount, $note, $paymentMethod]);
+            $orderStmt->execute([
+                $userId, $fullName, $email, $phone, $address, $finalAmount,
+                $note, $paymentMethod, $pointsRedeemed, $discountAmount
+            ]);
             $orderId = $this->db->lastInsertId();
 
             // 3. Tạo chi tiết đơn hàng và cập nhật tồn kho
-            $itemInsertSql = "INSERT INTO order_items (order_id, product_id, quantity, price, total_price) VALUES (?, ?, ?, ?, ?)";
+            $itemInsertSql  = "INSERT INTO order_items (order_id, product_id, quantity, price, total_price) VALUES (?, ?, ?, ?, ?)";
             $itemInsertStmt = $this->db->prepare($itemInsertSql);
-
-            $stockUpdateSql = "UPDATE products SET stock_quantity = stock_quantity - ? WHERE id = ?";
+            $stockUpdateSql  = "UPDATE products SET stock_quantity = stock_quantity - ? WHERE id = ?";
             $stockUpdateStmt = $this->db->prepare($stockUpdateSql);
 
             foreach ($itemsToInsert as $item) {
                 $itemInsertStmt->execute([
-                    $orderId, 
-                    $item['product_id'], 
-                    $item['quantity'], 
-                    $item['price'], 
-                    $item['total_price']
+                    $orderId, $item['product_id'], $item['quantity'],
+                    $item['price'], $item['total_price']
                 ]);
-
                 $stockUpdateStmt->execute([$item['quantity'], $item['product_id']]);
             }
 
-            // 4. Ghi lại lịch sử trạng thái đầu tiên
+            // 4. Trừ điểm đã dùng và ghi lịch sử
+            if ($userId && $pointsRedeemed > 0) {
+                $this->db->prepare("INSERT IGNORE INTO user_points (user_id, points, total_earned, total_spent) VALUES (?,0,0,0)")
+                    ->execute([$userId]);
+                $this->db->prepare("UPDATE user_points SET points = GREATEST(points - ?, 0), total_spent = total_spent + ? WHERE user_id = ?")
+                    ->execute([$pointsRedeemed, $pointsRedeemed, $userId]);
+                $this->db->prepare("INSERT INTO point_transactions (user_id, order_id, type, points, note) VALUES (?,?,?,?,?)")
+                    ->execute([$userId, $orderId, 'redeem', -$pointsRedeemed, "Dùng điểm cho đơn hàng #$orderId"]);
+            }
+
+            // 5. Ghi lại lịch sử trạng thái đầu tiên
             $this->addStatusHistory($orderId, 'pending', 'Đơn hàng được tạo thành công');
 
-            // 5. Ghi log khởi tạo giao dịch thanh toán
-            $this->addPaymentLog($orderId, $userId, $paymentMethod, $totalAmount, null, 'pending', 'Khởi tạo thông tin thanh toán cho đơn hàng');
+            // 6. Ghi log khởi tạo giao dịch thanh toán
+            $this->addPaymentLog($orderId, $userId, $paymentMethod, $finalAmount, null, 'pending', 'Khởi tạo thông tin thanh toán cho đơn hàng');
 
             $this->db->commit();
 
             return [
-                'success' => true,
-                'message' => 'Đặt hàng thành công',
-                'order_id' => $orderId
+                'success'  => true,
+                'message'  => 'Đặt hàng thành công',
+                'order_id' => $orderId,
+                'data'     => ['id' => $orderId]  // Tương thích với frontend
             ];
 
         } catch (Exception $e) {
@@ -229,74 +257,100 @@ class Order {
             return ['success' => false, 'message' => 'Đơn hàng không tồn tại'];
         }
 
-        $status = $data['status'] ?? $order['status'];
+        $status        = $data['status']         ?? $order['status'];
         $paymentStatus = $data['payment_status'] ?? $order['payment_status'];
-        $fullName = $data['full_name'] ?? $order['full_name'];
-        $phone = $data['phone'] ?? $order['phone'];
-        $address = $data['address'] ?? $order['address'];
+        $fullName      = $data['full_name']       ?? $order['full_name'];
+        $phone         = $data['phone']           ?? $order['phone'];
+        $address       = $data['address']         ?? $order['address'];
 
         // Validate status
         $validStatuses = ['pending', 'processing', 'completed', 'cancelled'];
-        if (!in_array($status, $validStatuses)) {
-            $status = $order['status'];
-        }
+        if (!in_array($status, $validStatuses)) $status = $order['status'];
 
         $validPaymentStatuses = ['pending', 'paid', 'failed'];
-        if (!in_array($paymentStatus, $validPaymentStatuses)) {
-            $paymentStatus = $order['payment_status'];
-        }
+        if (!in_array($paymentStatus, $validPaymentStatuses)) $paymentStatus = $order['payment_status'];
 
         try {
-            // Nếu chuyển sang trạng thái 'cancelled', hoàn lại tồn kho
-            if ($status === 'cancelled' && $order['status'] !== 'cancelled') {
-                $this->db->beginTransaction();
-                
-                foreach ($order['items'] as $item) {
-                    $sql = "UPDATE products SET stock_quantity = stock_quantity + ? WHERE id = ?";
-                    $stmt = $this->db->prepare($sql);
-                    $stmt->execute([$item['quantity'], $item['product_id']]);
-                }
+            $this->db->beginTransaction();
 
-                $updateSql = "UPDATE orders SET status = ?, payment_status = ?, full_name = ?, phone = ?, address = ?, updated_at = NOW() WHERE id = ?";
-                $updateStmt = $this->db->prepare($updateSql);
-                $updateStmt->execute([$status, $paymentStatus, $fullName, $phone, $address, $id]);
-                
-                // Ghi lịch sử nếu status thay đổi
-                if ($status !== $order['status']) {
-                    $this->addStatusHistory($id, $status, "Trạng thái đơn hàng được cập nhật bởi Admin");
+            // Hoàn kho nếu hủy
+            if ($status === 'cancelled' && $order['status'] !== 'cancelled') {
+                foreach ($order['items'] as $item) {
+                    $this->db->prepare("UPDATE products SET stock_quantity = stock_quantity + ? WHERE id = ?")
+                        ->execute([$item['quantity'], $item['product_id']]);
                 }
-                
-                $this->db->commit();
-            } else {
-                $updateSql = "UPDATE orders SET status = ?, payment_status = ?, full_name = ?, phone = ?, address = ?, updated_at = NOW() WHERE id = ?";
-                $updateStmt = $this->db->prepare($updateSql);
-                $updateStmt->execute([$status, $paymentStatus, $fullName, $phone, $address, $id]);
-                
-                // Ghi lịch sử trạng thái
-                if ($status !== $order['status']) {
-                    $this->addStatusHistory($id, $status, "Trạng thái đơn hàng được cập nhật bởi Admin");
-                }
-                
-                // Ghi lịch sử thanh toán nếu payment_status thay đổi sang 'paid'
-                if ($paymentStatus !== $order['payment_status']) {
-                    $this->addStatusHistory($id, $status, "Trạng thái thanh toán: " . $paymentStatus);
-                    if ($paymentStatus === 'paid') {
-                        // Lấy user_id từ đơn hàng hiện tại
-                        $userId = $order['user_id'] ?? null;
-                        $this->addPaymentLog($id, $userId, $order['payment_method'], $order['total_amount'], null, 'paid', 'Thanh toán thành công qua Admin');
+            }
+
+            // Cập nhật đơn hàng
+            $updateSql = "UPDATE orders SET status = ?, payment_status = ?, full_name = ?, phone = ?, address = ?, updated_at = NOW() WHERE id = ?";
+            $this->db->prepare($updateSql)->execute([$status, $paymentStatus, $fullName, $phone, $address, $id]);
+
+            // Ghi lịch sử trạng thái
+            if ($status !== $order['status']) {
+                $this->addStatusHistory($id, $status, "Trạng thái đơn hàng được cập nhật bởi Admin");
+            }
+
+            // ── Xử lý tích điểm ─────────────────────────────────────────────────────────────────────────────────────────
+            $orderUserId = (int)($order['user_id'] ?? 0);
+            if ($orderUserId > 0 && $status !== $order['status']) {
+                // Đảm bảo bản ghi user_points tồn tại
+                $this->db->prepare("INSERT IGNORE INTO user_points (user_id, points, total_earned, total_spent) VALUES (?,0,0,0)")
+                    ->execute([$orderUserId]);
+
+                $defineEarnRate   = 10000; // 10.000đ = 1 điểm
+
+                if ($status === 'completed' && $order['status'] !== 'completed') {
+                    // Cộng điểm dựa trên số tiền thực trả (tổng - giảm giá)
+                    $totalPaid  = (float)$order['total_amount'];
+                    $earnedPts  = (int)floor($totalPaid / $defineEarnRate);
+
+                    if ($earnedPts > 0) {
+                        $this->db->prepare("UPDATE user_points SET points = points + ?, total_earned = total_earned + ? WHERE user_id = ?")
+                            ->execute([$earnedPts, $earnedPts, $orderUserId]);
+                        $this->db->prepare("INSERT INTO point_transactions (user_id, order_id, type, points, note) VALUES (?,?,?,?,?)")
+                            ->execute([$orderUserId, $id, 'earn', $earnedPts, "Hoàn tất đơn hàng #$id"]);
+                        $this->db->prepare("UPDATE orders SET points_earned = ? WHERE id = ?")
+                            ->execute([$earnedPts, $id]);
+                    }
+
+                } elseif ($status === 'cancelled') {
+                    // Hoàn lại điểm đã dùng (nếu có)
+                    $redeemed = (int)($order['points_redeemed'] ?? 0);
+                    if ($redeemed > 0) {
+                        $this->db->prepare("UPDATE user_points SET points = points + ?, total_spent = GREATEST(total_spent - ?, 0) WHERE user_id = ?")
+                            ->execute([$redeemed, $redeemed, $orderUserId]);
+                        $this->db->prepare("INSERT INTO point_transactions (user_id, order_id, type, points, note) VALUES (?,?,?,?,?)")
+                            ->execute([$orderUserId, $id, 'refund', $redeemed, "Hoàn điểm do hủy đơn #$id"]);
+                    }
+                    // Thu hồi điểm đã cộng (nếu trước đó đã completed)
+                    $earned = (int)($order['points_earned'] ?? 0);
+                    if ($earned > 0 && $order['status'] === 'completed') {
+                        $this->db->prepare("UPDATE user_points SET points = GREATEST(points - ?, 0), total_earned = GREATEST(total_earned - ?, 0) WHERE user_id = ?")
+                            ->execute([$earned, $earned, $orderUserId]);
+                        $this->db->prepare("INSERT INTO point_transactions (user_id, order_id, type, points, note) VALUES (?,?,?,?,?)")
+                            ->execute([$orderUserId, $id, 'refund', -$earned, "Thu hồi điểm do hủy đơn #$id"]);
                     }
                 }
             }
 
+            // Ghi lịch sử thanh toán nếu payment_status đổi sang 'paid'
+            if ($paymentStatus !== $order['payment_status']) {
+                $this->addStatusHistory($id, $status, "Trạng thái thanh toán: " . $paymentStatus);
+                if ($paymentStatus === 'paid') {
+                    $userId = $order['user_id'] ?? null;
+                    $this->addPaymentLog($id, $userId, $order['payment_method'], $order['total_amount'], null, 'paid', 'Thanh toán thành công qua Admin');
+                }
+            }
+
+            $this->db->commit();
+
             return [
                 'success' => true,
                 'message' => 'Cập nhật đơn hàng thành công',
-                'order' => $this->getById($id)
+                'order'   => $this->getById($id)
             ];
         } catch (PDOException $e) {
-            if ($this->db->inTransaction()) {
-                $this->db->rollBack();
-            }
+            if ($this->db->inTransaction()) $this->db->rollBack();
             return [
                 'success' => false,
                 'message' => 'Lỗi cập nhật đơn hàng: ' . $e->getMessage()
@@ -340,6 +394,57 @@ class Order {
             return [
                 'success' => false,
                 'message' => 'Lỗi xóa đơn hàng: ' . $e->getMessage()
+            ];
+        }
+    }
+
+    // Người dùng tự hủy đơn hàng của mình
+    public function cancelByUser($id, $userId) {
+        $order = $this->getById($id);
+
+        if (!$order) {
+            return ['success' => false, 'message' => 'Đơn hàng không tồn tại'];
+        }
+
+        // Chỉ cho phép hủy đơn của chính mình
+        if ($order['user_id'] != $userId) {
+            return ['success' => false, 'message' => 'Bạn không có quyền hủy đơn hàng này'];
+        }
+
+        // Chỉ cho phép hủy khi đơn đang ở trạng thái pending hoặc processing
+        if (!in_array($order['status'], ['pending', 'processing'])) {
+            return ['success' => false, 'message' => 'Không thể hủy đơn hàng ở trạng thái "' . $order['status'] . '"'];
+        }
+
+        try {
+            $this->db->beginTransaction();
+
+            // Hoàn lại tồn kho
+            foreach ($order['items'] as $item) {
+                $sql = "UPDATE products SET stock_quantity = stock_quantity + ? WHERE id = ?";
+                $stmt = $this->db->prepare($sql);
+                $stmt->execute([$item['quantity'], $item['product_id']]);
+            }
+
+            // Cập nhật trạng thái đơn hàng
+            $sql = "UPDATE orders SET status = 'cancelled', updated_at = NOW() WHERE id = ?";
+            $stmt = $this->db->prepare($sql);
+            $stmt->execute([$id]);
+
+            // Ghi lịch sử
+            $this->addStatusHistory($id, 'cancelled', 'Khách hàng tự hủy đơn hàng');
+
+            $this->db->commit();
+
+            return [
+                'success' => true,
+                'message' => 'Hủy đơn hàng thành công'
+            ];
+        } catch (PDOException $e) {
+            $this->db->rollBack();
+            return [
+                'success' => false,
+                'message' => 'Lỗi hủy đơn hàng: ' . $e->getMessage()
             ];
         }
     }

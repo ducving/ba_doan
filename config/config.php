@@ -31,4 +31,7 @@ ini_set('error_log', __DIR__ . '/../storage/php_errors.log');
 // JWT Secret Key (nên thay đổi trong production)
 define('JWT_SECRET_KEY', 'your-super-secret-key-change-this-in-production-' . date('Y'));
 define('JWT_EXPIRATION', 3600 * 24); // 24 giờ
+
+// Google OAuth (Thay đổi bằng Client ID thực của bạn từ Google Console)
+define('GOOGLE_CLIENT_ID', 'YOUR_GOOGLE_CLIENT_ID_HERE.apps.googleusercontent.com');
 ?>
