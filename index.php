@@ -82,9 +82,15 @@ switch ($path) {
         require_once __DIR__ . '/api/attendance.php';
         break;
 
-    case 'api/points':
     case 'api/points.php':
         require_once __DIR__ . '/api/points.php';
+        break;
+
+    case 'api/lucky_wheel':
+    case 'api/lucky_wheel.php':
+    case 'lucky_wheel.php':
+    case 'lucky_wheel':
+        require_once __DIR__ . '/api/lucky_wheel.php';
         break;
     
     default:

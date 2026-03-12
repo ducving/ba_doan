@@ -55,41 +55,55 @@ $userModel = new User();
 
 switch ($method) {
     case 'GET':
-        // ... (giữ nguyên logic GET)
-        $userId = $payload['user_id'];
-        
-        if (isset($_GET['id']) && $payload['role'] === 'admin') {
-            $userId = (int)$_GET['id'];
+        // 1. Trường hợp lấy thông tin chi tiết (nếu có id)
+        if (isset($_GET['id'])) {
+            // Chỉ admin mới được xem người khác, user thường chỉ được xem chính mình
+            $targetId = (int)$_GET['id'];
+            if ($payload['role'] !== 'admin' && $payload['user_id'] != $targetId) {
+                http_response_code(403);
+                echo json_encode(['success' => false, 'message' => 'Bạn không có quyền xem thông tin này']);
+                exit();
+            }
+            $user = $userModel->getUserById($targetId);
+            if ($user) {
+                echo json_encode(['success' => true, 'data' => $user]);
+            } else {
+                http_response_code(404);
+                echo json_encode(['success' => false, 'message' => 'Người dùng không tồn tại']);
+            }
+            exit();
         }
 
-        $user = $userModel->getUserById($userId);
-        
-        if ($user) {
-            echo json_encode([
-                'success' => true,
-                'data' => $user
-            ]);
-        } else {
-            http_response_code(404);
-            echo json_encode([
-                'success' => false,
-                'message' => 'Người dùng không tồn tại'
-            ]);
+        // 2. Trường hợp lấy danh sách (Chỉ dành cho Admin)
+        if ($payload['role'] !== 'admin') {
+            // User thường thì trả về thông tin chính mình nếu không có ID
+            $user = $userModel->getUserById($payload['user_id']);
+            echo json_encode(['success' => true, 'data' => $user]);
+            exit();
         }
+
+        $role_filter = $_GET['role'] ?? 'user';
+        if ($role_filter === 'all') {
+            $users = $userModel->getAllUsers();
+        } else {
+            $users = $userModel->getUsersByRole($role_filter);
+        }
+
+        echo json_encode([
+            'success' => true,
+            'count' => count($users),
+            'data' => $users
+        ]);
         break;
 
     case 'POST':
         // PHP mặc định không xử lý multipart/form-data cho PUT, nên ta dùng POST + _method=PUT hoặc xử lý riêng
-        // Để đơn giản, cho phép dùng POST để update nếu có file upload
         if (isset($_POST['_method']) && strtoupper($_POST['_method']) === 'PUT') {
             $method = 'PUT';
         } else {
-            // Nếu gửi POST bình thường tới endpoint update thì cũng coi như PUT
             $method = 'PUT';
         }
-        // Tiếp tục xuống case PUT
     case 'PUT':
-        // Cập nhật thông tin user
         $data = [];
         $contentType = $_SERVER['CONTENT_TYPE'] ?? $_SERVER['HTTP_CONTENT_TYPE'] ?? '';
 
@@ -99,13 +113,11 @@ switch ($method) {
             $data = json_decode(file_get_contents('php://input'), true);
         }
 
-        // Xác định ID người dùng mục tiêu (admin có thể sửa người khác)
         $targetUserId = $payload['user_id'];
         if (isset($data['id']) && $payload['role'] === 'admin') {
             $targetUserId = (int)$data['id'];
         }
 
-        // Lấy thông tin user hiện tại để kiểm tra ảnh cũ
         $currentUser = $userModel->getUserById($targetUserId);
         if (!$currentUser) {
             http_response_code(404);
@@ -118,8 +130,6 @@ switch ($method) {
                 $avatarPath = saveUploadedImage($_FILES['avatar'] ?? null, $UPLOAD_ABS_DIR, $UPLOAD_REL_DIR);
                 if ($avatarPath) {
                     $data['avatar'] = $avatarPath;
-                    
-                    // Xóa ảnh cũ nếu có
                     if (!empty($currentUser['avatar'])) {
                         $oldFileAbs = realpath(__DIR__ . '/..') . DIRECTORY_SEPARATOR . str_replace('/', DIRECTORY_SEPARATOR, $currentUser['avatar']);
                         if (file_exists($oldFileAbs) && is_file($oldFileAbs)) {
@@ -136,45 +146,42 @@ switch ($method) {
         
         if (!$data && empty($_FILES)) {
             http_response_code(400);
-            $msg = 'Dữ liệu không hợp lệ';
-            if ($_SERVER['REQUEST_METHOD'] === 'PUT' && stripos($contentType, 'multipart/form-data') !== false) {
-                $msg = 'PHP không hỗ trợ phương thức PUT để nhận file. Vui lòng chuyển sang phương thức POST để upload ảnh.';
-            }
-            echo json_encode([
-                'success' => false,
-                'message' => $msg
-            ]);
+            echo json_encode(['success' => false, 'message' => 'Dữ liệu không hợp lệ']);
             exit();
         }
 
-        // Sanitize dữ liệu
         if (isset($data['name'])) $data['name'] = Security::sanitizeInput($data['name']);
         if (isset($data['phone'])) $data['phone'] = Security::sanitizeInput($data['phone']);
         if (isset($data['address'])) $data['address'] = Security::sanitizeInput($data['address']);
         
-        // Chặn user thường đổi role hoặc status của chính mình
         if ($payload['role'] !== 'admin') {
             unset($data['role']);
             unset($data['status']);
         }
 
         $result = $userModel->update($targetUserId, $data);
-        
         if ($result['success']) {
-            // Lấy lại thông tin mới để trả về
-            $updatedUser = $userModel->getUserById($targetUserId);
-            $result['user'] = $updatedUser;
+            $result['user'] = $userModel->getUserById($targetUserId);
         }
-
         echo json_encode($result);
         break;
 
-    default:
-        http_response_code(405);
-        echo json_encode([
-            'success' => false,
-            'message' => 'Method not allowed'
-        ]);
+    case 'DELETE':
+        // Xóa người dùng (Chỉ dành cho Admin)
+        if ($payload['role'] !== 'admin') {
+            http_response_code(403);
+            echo json_encode(['success' => false, 'message' => 'Chỉ Admin mới có quyền xóa người dùng']);
+            exit();
+        }
+
+        if (!isset($_GET['id'])) {
+            http_response_code(400);
+            echo json_encode(['success' => false, 'message' => 'Thiếu ID người dùng']);
+            exit();
+        }
+
+        $result = $userModel->delete($_GET['id']);
+        echo json_encode($result);
         break;
 }
 ?>

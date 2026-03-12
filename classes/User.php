@@ -93,10 +93,10 @@ class User {
 
     // Lấy thông tin user theo ID
     public function getUserById($id) {
-        $sql = "SELECT id, name, email, phone, address, avatar, role, status, created_at FROM users WHERE id = ?";
+        $sql = "SELECT id, name, name as full_name, name as username, email, phone, address, avatar, role, status, created_at FROM users WHERE id = ?";
         $stmt = $this->db->prepare($sql);
         $stmt->execute([$id]);
-        return $stmt->fetch();
+        return $stmt->fetch(PDO::FETCH_ASSOC);
     }
 
     // Cập nhật thông tin user
@@ -239,22 +239,50 @@ class User {
         }
     }
 
-    // Lấy danh sách tất cả user
-    public function getAllUsers($limit = 10, $offset = 0) {
-        $sql = "SELECT id, name, email, phone, address, avatar, role, status, created_at 
+    // Lấy danh sách tất cả user (Admin)
+    public function getAllUsers() {
+        $sql = "SELECT id, name, name as full_name, name as username, email, phone, address, avatar, role, status, created_at 
                 FROM users 
-                ORDER BY created_at DESC 
-                LIMIT ? OFFSET ?";
-        
+                ORDER BY created_at DESC";
         try {
             $stmt = $this->db->prepare($sql);
-            $stmt->bindValue(1, (int)$limit, PDO::PARAM_INT);
-            $stmt->bindValue(2, (int)$offset, PDO::PARAM_INT);
             $stmt->execute();
-            
-            return $stmt->fetchAll();
+            return $stmt->fetchAll(PDO::FETCH_ASSOC);
         } catch (PDOException $e) {
             return [];
+        }
+    }
+
+    // Lấy danh sách user theo role
+    public function getUsersByRole($role) {
+        $sql = "SELECT id, name, name as full_name, name as username, email, phone, address, avatar, role, status, created_at 
+                FROM users 
+                WHERE role = ?
+                ORDER BY created_at DESC";
+        try {
+            $stmt = $this->db->prepare($sql);
+            $stmt->execute([$role]);
+            return $stmt->fetchAll(PDO::FETCH_ASSOC);
+        } catch (PDOException $e) {
+            return [];
+        }
+    }
+
+    // Xóa user
+    public function delete($id) {
+        $sql = "DELETE FROM users WHERE id = ?";
+        try {
+            $stmt = $this->db->prepare($sql);
+            $stmt->execute([$id]);
+            return [
+                'success' => true,
+                'message' => 'Xóa người dùng thành công'
+            ];
+        } catch (PDOException $e) {
+            return [
+                'success' => false,
+                'message' => 'Lỗi xóa: ' . $e->getMessage()
+            ];
         }
     }
 

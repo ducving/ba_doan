@@ -1,0 +1,12 @@
+CREATE TABLE `vouchers` (
+  `id` INT AUTO_INCREMENT PRIMARY KEY,
+  `code` VARCHAR(50) NOT NULL UNIQUE,
+  `discount_amount` DECIMAL(15,2) NOT NULL,
+  `start_date` DATETIME DEFAULT NULL,
+  `end_date` DATETIME DEFAULT NULL,
+  `usage_limit` INT DEFAULT NULL,
+  `used_count` INT DEFAULT 0,
+  `status` ENUM('active', 'inactive') NOT NULL DEFAULT 'active',
+  `created_at` DATETIME DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
